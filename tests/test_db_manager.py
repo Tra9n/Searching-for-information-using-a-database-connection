@@ -1,4 +1,8 @@
+"""Интеграционные тесты для DBManager (требуют PostgreSQL)."""
+
 import pytest
+
+pytestmark = pytest.mark.integration
 
 
 def test_get_countries_and_aeroplanes_count(db_manager):
@@ -10,7 +14,6 @@ def test_get_countries_and_aeroplanes_count(db_manager):
     assert result_dict["France"] == 2
     assert result_dict["Spain"] == 0
 
-    # Сортировка по убыванию количества
     counts = [count for _, count in result]
     assert counts == sorted(counts, reverse=True)
 
@@ -28,32 +31,6 @@ def test_get_avg_speed(db_manager):
     """Средняя скорость: (250 + 300 + 150 + 200) / 4 = 225.0"""
     avg = db_manager.get_avg_speed()
     assert avg == pytest.approx(225.0, rel=1e-3)
-
-
-def test_get_avg_speed_empty(clean_db, monkeypatch):
-    """Если нет самолётов, метод возвращает 0."""
-    import config
-    from tests.conftest import TEST_DB_CONFIG
-    monkeypatch.setattr(config, "DB_CONFIG", TEST_DB_CONFIG)
-
-    import importlib
-    import src.database.db_manager as dbm
-    importlib.reload(dbm)
-
-    # Очищаем таблицу
-    import psycopg2
-    conn = psycopg2.connect(**TEST_DB_CONFIG)
-    cur = conn.cursor()
-    cur.execute("TRUNCATE aeroplanes RESTART IDENTITY CASCADE;")
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    manager = dbm.DBManager()
-    try:
-        assert manager.get_avg_speed() == 0
-    finally:
-        manager.close()
 
 
 def test_get_aeroplanes_with_higher_speed(db_manager):

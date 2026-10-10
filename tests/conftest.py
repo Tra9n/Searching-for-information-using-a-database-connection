@@ -1,140 +1,140 @@
+"""Общие фикстуры для тестов."""
+
 import os
+
+import psycopg2
+import pytest
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
 os.environ.setdefault("LC_MESSAGES", "C")
 os.environ.setdefault("LANG", "C")
 
-import pytest
-import psycopg2
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-
 TEST_DB_NAME = os.getenv("TEST_DB_NAME", "sky_db_test")
-TEST_DB_USER = os.getenv("DB_USER", "postgres")
-TEST_DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
-TEST_DB_HOST = os.getenv("DB_HOST", "localhost")
-TEST_DB_PORT = os.getenv("DB_PORT", "5432")
-
-TEST_DB_CONFIG = {
-    "dbname": TEST_DB_NAME,
-    "user": TEST_DB_USER,
-    "password": TEST_DB_PASSWORD,
-    "host": TEST_DB_HOST,
-    "port": TEST_DB_PORT,
+TEST_DB_PARAMS = {
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "postgres"),
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": os.getenv("DB_PORT", "5432"),
 }
 
-_ADMIN_CONNECT_KWARGS = {
-    "user": TEST_DB_USER,
-    "password": TEST_DB_PASSWORD,
-    "host": TEST_DB_HOST,
-    "port": TEST_DB_PORT,
-}
 
+def _decode_pg_error(exc: Exception) -> str:
+    """Libpq на русской Windows отдаёт сообщения в cp1251."""
+    raw = getattr(exc, "pgerror", None) or (exc.args[0] if exc.args else "")
+    if isinstance(raw, bytes):
+        for enc in ("utf-8", "cp1251", "latin-1"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return repr(raw)
+    return str(raw)
 
 
 @pytest.fixture(scope="session")
 def db_available():
-    """True, если PostgreSQL доступен. Иначе тесты с БД будут пропущены."""
+    """True, если PostgreSQL доступен. Иначе — интеграционные тесты skip."""
     try:
-        conn = psycopg2.connect(dbname="postgres", **_ADMIN_CONNECT_KWARGS)
+        conn = psycopg2.connect(dbname="postgres", **TEST_DB_PARAMS)
         conn.close()
         return True
-    except Exception as e:
-        print(f"\n[conftest] PostgreSQL недоступен: {e!r}")
+    except UnicodeDecodeError as exc:
+        raw = exc.object
+        for enc in ("cp1251", "utf-8", "latin-1"):
+            try:
+                print(f"\n[conftest] PostgreSQL ответил ({enc}): {raw.decode(enc)}")
+                break
+            except UnicodeDecodeError:
+                continue
+        return False
+    except Exception as exc:
+        print(f"\n[conftest] PostgreSQL недоступен: {exc}")
         return False
 
 
-
-def _create_test_database():
-    conn = psycopg2.connect(dbname="postgres", **_ADMIN_CONNECT_KWARGS)
+def _create_test_database() -> None:
+    """Создаёт тестовую БД, если её нет."""
+    conn = psycopg2.connect(dbname="postgres", **TEST_DB_PARAMS)
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (TEST_DB_NAME,))
-    if not cur.fetchone():
-        cur.execute(f'CREATE DATABASE "{TEST_DB_NAME}" ENCODING \'UTF8\';')
-    cur.close()
-    conn.close()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s;", (TEST_DB_NAME,)
+            )
+            if not cur.fetchone():
+                cur.execute(f"CREATE DATABASE \"{TEST_DB_NAME}\" ENCODING 'UTF8';")
+    finally:
+        conn.close()
 
 
 @pytest.fixture(scope="session")
 def setup_test_db(db_available):
-    """Создаёт тестовую БД и таблицы. Запускается ТОЛЬКО если БД доступна."""
+    """Создаёт тестовую БД и таблицы. Только если PostgreSQL доступен."""
     if not db_available:
         pytest.skip("PostgreSQL недоступен — интеграционные тесты пропущены.")
 
     _create_test_database()
 
-    conn = psycopg2.connect(**TEST_DB_CONFIG)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS countries (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(100) UNIQUE NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS aeroplanes (
-            id SERIAL PRIMARY KEY,
-            icao24 VARCHAR(10),
-            callsign VARCHAR(20),
-            origin_country VARCHAR(100),
-            velocity REAL,
-            country_id INTEGER REFERENCES countries(id)
-        );
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
+    from src.database.loader import SCHEMA_SQL
+
+    conn = psycopg2.connect(dbname=TEST_DB_NAME, **TEST_DB_PARAMS)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(SCHEMA_SQL)
+        conn.commit()
+    finally:
+        conn.close()
 
     yield
 
-    conn = psycopg2.connect(**TEST_DB_CONFIG)
-    cur = conn.cursor()
-    cur.execute("DROP TABLE IF EXISTS aeroplanes;")
-    cur.execute("DROP TABLE IF EXISTS countries;")
-    conn.commit()
-    cur.close()
-    conn.close()
+    conn = psycopg2.connect(dbname=TEST_DB_NAME, **TEST_DB_PARAMS)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS aeroplanes;")
+            cur.execute("DROP TABLE IF EXISTS countries;")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 @pytest.fixture
 def clean_db(setup_test_db):
     """Очищает и наполняет таблицы тестовыми данными."""
-    conn = psycopg2.connect(**TEST_DB_CONFIG)
-    cur = conn.cursor()
-    cur.execute("TRUNCATE aeroplanes RESTART IDENTITY CASCADE;")
-    cur.execute("TRUNCATE countries RESTART IDENTITY CASCADE;")
+    conn = psycopg2.connect(dbname=TEST_DB_NAME, **TEST_DB_PARAMS)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE aeroplanes RESTART IDENTITY CASCADE;")
+            cur.execute("TRUNCATE countries RESTART IDENTITY CASCADE;")
 
-    cur.execute("INSERT INTO countries (name) VALUES ('Germany') RETURNING id;")
-    germany_id = cur.fetchone()[0]
-    cur.execute("INSERT INTO countries (name) VALUES ('France') RETURNING id;")
-    france_id = cur.fetchone()[0]
-    cur.execute("INSERT INTO countries (name) VALUES ('Spain') RETURNING id;")
+            cur.execute("INSERT INTO countries (name) VALUES ('Germany') RETURNING id;")
+            germany_id = cur.fetchone()[0]
+            cur.execute("INSERT INTO countries (name) VALUES ('France') RETURNING id;")
+            france_id = cur.fetchone()[0]
+            cur.execute("INSERT INTO countries (name) VALUES ('Spain');")
 
-    aeroplanes = [
-        ("abc123", "ACA101", "Canada", 250.0, germany_id),
-        ("def456", "DLH202", "Germany", 300.0, germany_id),
-        ("ghi789", "AFR303", "France", 150.0, france_id),
-        ("jkl012", "ACA404", "Canada", 200.0, france_id),
-    ]
-    for icao, callsign, origin, velocity, cid in aeroplanes:
-        cur.execute(
-            """INSERT INTO aeroplanes (icao24, callsign, origin_country, velocity, country_id)
-               VALUES (%s, %s, %s, %s, %s);""",
-            (icao, callsign, origin, velocity, cid),
-        )
-
-    conn.commit()
-    cur.close()
-    conn.close()
+            rows = [
+                ("abc123", "ACA101", "Canada", 250.0, germany_id),
+                ("def456", "DLH202", "Germany", 300.0, germany_id),
+                ("ghi789", "AFR303", "France", 150.0, france_id),
+                ("jkl012", "ACA404", "Canada", 200.0, france_id),
+            ]
+            cur.executemany(
+                """INSERT INTO aeroplanes
+                   (icao24, callsign, origin_country, velocity, country_id)
+                   VALUES (%s, %s, %s, %s, %s);""",
+                rows,
+            )
+        conn.commit()
+    finally:
+        conn.close()
     yield
 
 
 @pytest.fixture
-def db_manager(clean_db, monkeypatch):
+def db_manager(clean_db):
     """DBManager, подключённый к тестовой БД."""
-    import config
-    monkeypatch.setattr(config, "DB_CONFIG", TEST_DB_CONFIG)
+    from src.database.db_manager import DBManager
 
-    import importlib
-    import src.database.db_manager as dbm
-    importlib.reload(dbm)
-
-    manager = dbm.DBManager()
+    manager = DBManager(TEST_DB_NAME, TEST_DB_PARAMS)
     yield manager
     manager.close()

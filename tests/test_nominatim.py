@@ -1,5 +1,9 @@
-import pytest
+"""Unit-тесты для клиента Nominatim (с моками HTTP)."""
+
 from unittest.mock import Mock, patch
+
+import pytest
+
 from src.api.nominatim import get_country_bbox
 
 

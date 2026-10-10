@@ -1,5 +1,9 @@
-import pytest
+"""Unit-тесты для клиента OpenSky (с моками HTTP)."""
+
 from unittest.mock import Mock, patch
+
+import pytest
+
 from src.api.opensky import get_airplanes_in_bbox
 
 
@@ -10,7 +14,18 @@ def test_get_airplanes_in_bbox_success(mock_get):
     mock_response.json.return_value = {
         "states": [
             ["abc123", "ACA101", "Canada", None, None, 10.0, 20.0, 10000, False, 250.0],
-            ["def456", "DLH202", "Germany", None, None, 11.0, 21.0, 11000, False, 300.0],
+            [
+                "def456",
+                "DLH202",
+                "Germany",
+                None,
+                None,
+                11.0,
+                21.0,
+                11000,
+                False,
+                300.0,
+            ],
         ]
     }
     mock_response.raise_for_status = Mock()

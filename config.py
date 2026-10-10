@@ -1,16 +1,23 @@
-import os
-from dotenv import load_dotenv
+"""Конфигурация проекта: чтение параметров подключения к БД."""
 
-load_dotenv()
+from configparser import ConfigParser
 
-DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": os.getenv("DB_PORT", "5432"),
-}
 
-NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT")
+def config(filename: str = "database.ini", section: str = "postgresql") -> dict:
+    """
+    Читает параметры подключения к PostgreSQL из ini-файла.
 
-COUNTRIES = ["Germany", "France", "Italy", "Spain"]
+    :param filename: путь к ini-файлу
+    :param section: имя секции с параметрами
+    :return: словарь с ключами host, user, password, port, database
+    :raises FileNotFoundError: если файл не найден
+    :raises Exception: если секция отсутствует
+    """
+    parser = ConfigParser()
+    if not parser.read(filename):
+        raise FileNotFoundError(f"Файл конфигурации не найден: {filename}")
+
+    if not parser.has_section(section):
+        raise Exception(f"Секция [{section}] не найдена в {filename}")
+
+    return dict(parser.items(section))

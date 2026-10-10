@@ -1,6 +1,5 @@
 requests
 psycopg2-binary
-geopy
 python-dotenv
 pytest
 pytest-mock
